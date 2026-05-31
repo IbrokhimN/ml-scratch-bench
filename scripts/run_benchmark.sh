@@ -1,21 +1,6 @@
 #!/usr/bin/env bash
-# =============================================================
-#  run_benchmark.sh  –  Build, run and visualise CPU vs CUDA
-#
-#  Usage (from project root):
-#    bash scripts/run_benchmark.sh
-#    bash scripts/run_benchmark.sh --skip-cuda
-#
-#  Or via Makefile:
-#    make run          (with CUDA)
-#    make run_cpu      (CPU only)
-# =============================================================
 set -euo pipefail
 
-# ROOT = directory containing this script's PARENT (the project root)
-# Works whether called as:
-#   bash scripts/run_benchmark.sh   (from project root)
-#   ./run_benchmark.sh              (from scripts/ dir)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
@@ -28,48 +13,29 @@ PLOT_PY="${ROOT}/scripts/plot_results.py"
 
 mkdir -p "${RESULTS}"
 
-# ── Colours ──────────────────────────────────────────────────
-B="\033[1m"; G="\033[32m"; C="\033[36m"; Y="\033[33m"; R="\033[31m"; Z="\033[0m"
-banner() { echo -e "\n${B}${C}══════════════════════════════════════════════${Z}";
-           echo -e "${B}${C}  $1${Z}";
-           echo -e "${B}${C}══════════════════════════════════════════════${Z}"; }
-step()  { echo -e "\n${G}▶  $1${Z}"; }
-ok()    { echo -e "   ${G}✔  $1${Z}"; }
-warn()  { echo -e "   ${Y}⚠  $1${Z}"; }
-fail()  { echo -e "   ${R}✘  $1${Z}"; }
-
-# ── Parse args ───────────────────────────────────────────────
 SKIP_CUDA=false
 for a in "$@"; do [[ "$a" == "--skip-cuda" ]] && SKIP_CUDA=true; done
 
-banner "Advanced ML Benchmark  —  CPU vs CUDA"
-echo -e "   Root : ${ROOT}"
+echo "Root: ${ROOT}"
 
-# ─────────────────────────────────────────────────────────────
-#  Step 1: Compile CPU binary
-# ─────────────────────────────────────────────────────────────
-step "Compiling CPU binary  (g++ -O3 -march=native)"
-
+echo "Compiling CPU binary..."
 if g++ -std=c++17 -O3 -march=native \
        -o "${CPU_BIN}" \
        "${CPU_SRC}" \
        -lm 2>&1; then
-    ok "CPU binary → ${CPU_BIN}"
+    echo "OK: ${CPU_BIN}"
 else
-    fail "CPU compilation failed"
+    echo "ERROR: CPU compilation failed"
     exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────
-#  Step 2: Compile CUDA binary (if available)
-# ─────────────────────────────────────────────────────────────
 CUDA_OK=false
 
 if ! $SKIP_CUDA && command -v nvcc &>/dev/null; then
     CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap \
                   --format=csv,noheader 2>/dev/null \
                   | head -1 | tr -d '.' 2>/dev/null || echo "75")
-    step "Compiling CUDA binary  (nvcc -O3 -arch=sm_${CUDA_ARCH})"
+    echo "Compiling CUDA binary (sm_${CUDA_ARCH})..."
 
     if nvcc -std=c++17 -O3 \
             -arch="sm_${CUDA_ARCH}" \
@@ -78,36 +44,27 @@ if ! $SKIP_CUDA && command -v nvcc &>/dev/null; then
             -o "${CUDA_BIN}" \
             "${CUDA_SRC}" \
             -lm 2>&1; then
-        ok "CUDA binary → ${CUDA_BIN}  (sm_${CUDA_ARCH})"
+        echo "OK: ${CUDA_BIN}"
         CUDA_OK=true
     else
-        warn "CUDA compilation failed – will simulate GPU data"
+        echo "WARN: CUDA compilation failed, will simulate GPU data"
     fi
 elif $SKIP_CUDA; then
-    warn "--skip-cuda flag set, will simulate GPU data"
+    echo "WARN: --skip-cuda set, will simulate GPU data"
 else
-    warn "nvcc not found, will simulate GPU data"
+    echo "WARN: nvcc not found, will simulate GPU data"
 fi
 
-# ─────────────────────────────────────────────────────────────
-#  Step 3: Run CPU benchmark
-# ─────────────────────────────────────────────────────────────
-banner "CPU Benchmark"
-step "Running CPU benchmark  (may take 2-5 min)"
+echo "Running CPU benchmark (may take 2-5 min)..."
 "${CPU_BIN}" "${RESULTS}/cpu_results.csv"
-ok "CPU results → results/cpu_results.csv"
+echo "OK: results/cpu_results.csv"
 
-# ─────────────────────────────────────────────────────────────
-#  Step 4: Run CUDA benchmark  OR  simulate
-# ─────────────────────────────────────────────────────────────
-banner "CUDA Benchmark"
 if $CUDA_OK; then
-    step "Running CUDA benchmark"
+    echo "Running CUDA benchmark..."
     "${CUDA_BIN}" "${RESULTS}/cuda_results.csv"
-    ok "CUDA results → results/cuda_results.csv"
+    echo "OK: results/cuda_results.csv"
 else
-    step "Simulating CUDA results  (based on real CPU times)"
-    warn "Speedup model: Michaelis-Menten saturation per algorithm"
+    echo "Simulating CUDA results..."
     python3 - "${RESULTS}/cpu_results.csv" "${RESULTS}/cuda_results.csv" <<'PYEOF'
 import csv, sys, random, math
 from collections import defaultdict
@@ -166,15 +123,10 @@ with open(out_csv, "w", newline="") as f:
     w.writeheader(); w.writerows(out_rows)
 print(f"  Simulation complete ({len(out_rows)} rows).")
 PYEOF
-    ok "Simulated CUDA results → results/cuda_results.csv"
+    echo "OK: results/cuda_results.csv (simulated)"
 fi
 
-# ─────────────────────────────────────────────────────────────
-#  Step 5: Merge + speedup CSV
-# ─────────────────────────────────────────────────────────────
-banner "Post-processing"
-step "Merging CSVs and computing speedups"
-
+echo "Merging CSVs and computing speedups..."
 python3 - "${RESULTS}" <<'PYEOF'
 import csv, sys
 from collections import defaultdict
@@ -213,28 +165,22 @@ with open(f"{R}/speedup_summary.csv","w",newline="") as f:
     w.writeheader(); w.writerows(rows)
 
 print(f"\n  {'Algorithm':<22} {'N':>6} {'CPU ms':>10} {'CUDA ms':>10} {'Speedup':>9}")
-print("  " + "─" * 63)
+print("  " + "-" * 63)
 for r in rows:
     print(f"  {r['algorithm']:<22} {r['n_samples']:>6,} "
-          f"{r['cpu_ms']:>10.1f} {r['cuda_ms']:>10.1f} {r['speedup']:>8.1f}×")
+          f"{r['cpu_ms']:>10.1f} {r['cuda_ms']:>10.1f} {r['speedup']:>8.1f}x")
 PYEOF
-ok "combined_results.csv  +  speedup_summary.csv"
+echo "OK: combined_results.csv + speedup_summary.csv"
 
-# ─────────────────────────────────────────────────────────────
-#  Step 6: Plot
-# ─────────────────────────────────────────────────────────────
-banner "Visualisation"
-step "Generating matplotlib plots"
+echo "Generating plots..."
 python3 "${PLOT_PY}" \
     --combined "${RESULTS}/combined_results.csv" \
     --speedup  "${RESULTS}/speedup_summary.csv"  \
     --output   "${RESULTS}/benchmark_plots.png"
-ok "Plot → results/benchmark_plots.png"
+echo "OK: results/benchmark_plots.png"
 
-banner "Done ✔"
-echo -e "  ${B}Output files:${Z}"
+echo "Done. Output files:"
 for f in cpu_results cuda_results combined_results speedup_summary; do
-    echo -e "    ${C}results/${f}.csv${Z}"
+    echo "  results/${f}.csv"
 done
-echo -e "    ${C}results/benchmark_plots.png${Z}"
-echo ""
+echo "  results/benchmark_plots.png"
