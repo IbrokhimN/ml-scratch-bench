@@ -66,7 +66,7 @@ Synthetic, fixed seed `0xDEADBEEFCAFE1234`. Multiclass: K=4 Gaussian clusters, �
 
 ### 2.1 Benchmark Figures
 
-![Full benchmark results — CPU vs CUDA GPU across all algorithms and sample sizes]()
+![Full benchmark results — CPU vs CUDA GPU across all algorithms and sample sizes](https://raw.githubusercontent.com/IbrokhimN/ml-scratch-bench/refs/heads/main/results/benchmark_plots_v3.png)
 
 
 **Figure 1.** Complete benchmark results.
