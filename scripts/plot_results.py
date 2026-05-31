@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""
-plot_results.py  —  ML Benchmark Visualiser  v3
-Fixes over v2:
-  - Log-scale: labels spread vertically with adjust_text-style nudging
-  - Bar chart: CUDA labels placed ABOVE CPU bar when overlapping
-  - Heatmap: speedup clipped to [0.1, +inf], no negative values
-  - Speedup curves: Y-axis always starts at 0, consistent scale
-  - Stacked bars: CPU/CUDA labels in top margin, not on bars
-  - L-BFGS: ⚠ label only when speedup truly < 0.5 after clipping
-"""
-
 import argparse, csv, sys, math
 from collections import defaultdict
 
@@ -21,7 +10,7 @@ import matplotlib.ticker as mticker
 import matplotlib.patches as mpatches
 import numpy as np
 
-# ── Design tokens ──────────────────────────────────────────────
+# colors
 BG      = "#0d1117"
 SURFACE = "#161b22"
 BORDER  = "#30363d"
@@ -57,7 +46,7 @@ ALGO_LABEL = {
     "RandomForest": "Random Forest",
 }
 
-# ── Helpers ────────────────────────────────────────────────────
+
 def load_speedup(path):
     rows = []
     with open(path) as f:
@@ -67,10 +56,10 @@ def load_speedup(path):
                 "n":       int(r["n_samples"]),
                 "cpu_ms":  float(r["cpu_ms"]),
                 "cuda_ms": float(r["cuda_ms"]),
-                # clip: negative/zero speedup is a measurement artifact
-                "speedup": max(0.10, float(r["speedup"])),
+                "speedup": max(0.10, float(r["speedup"])),  # clip negatives
             })
     return rows
+
 
 def style(ax, title="", xlabel="", ylabel=""):
     ax.set_facecolor(SURFACE)
@@ -85,11 +74,12 @@ def style(ax, title="", xlabel="", ylabel=""):
     if xlabel: ax.set_xlabel(xlabel, color=MUTED, fontsize=8)
     if ylabel: ax.set_ylabel(ylabel, color=MUTED, fontsize=8)
 
+
 def n_label(n):
     return f"{n//1000}k" if n >= 1000 else str(n)
 
+
 def smooth_ma(vals, w=3):
-    """Moving average, raw endpoints."""
     arr = np.array(vals, dtype=float)
     if len(arr) <= w:
         return arr.tolist()
@@ -97,12 +87,9 @@ def smooth_ma(vals, w=3):
     out[0] = arr[0]; out[-1] = arr[-1]
     return out.tolist()
 
+
 def spread_labels(ys, min_gap=0.06):
-    """
-    Nudge y-positions apart so annotations don't overlap.
-    Returns adjusted list of y positions (same order as input).
-    Simple iterative push-apart.
-    """
+    # iteratively push overlapping labels apart
     pairs = sorted(enumerate(ys), key=lambda x: x[1])
     adjusted = [y for _, y in pairs]
     for _ in range(50):
@@ -116,13 +103,12 @@ def spread_labels(ys, min_gap=0.06):
                 moved = True
         if not moved:
             break
-    # Map back to original order
     result = [0.0] * len(ys)
     for new_i, (orig_i, _) in enumerate(pairs):
         result[orig_i] = adjusted[new_i]
     return result
 
-# ══════════════════════════════════════════════════════════════
+
 def make_plot(speedup_path, output_path):
     sp_rows = load_speedup(speedup_path)
 
@@ -142,10 +128,9 @@ def make_plot(speedup_path, output_path):
     n_max   = max(sizes)
     n_algos = len(algos)
 
-    # ── Layout: 4 rows ─────────────────────────────────────────
     fig = plt.figure(figsize=(26, 23), facecolor=BG)
     fig.suptitle(
-        "Advanced ML Algorithms  —  CPU vs CUDA GPU Acceleration",
+        "Advanced ML Algorithms  -  CPU vs CUDA GPU Acceleration",
         color=FG, fontsize=17, fontweight="bold", y=0.987
     )
     outer = gridspec.GridSpec(
@@ -167,28 +152,23 @@ def make_plot(speedup_path, output_path):
     ax_stk  = fig.add_subplot(gs3[1])
     ax_peak = fig.add_subplot(gs3[2])
 
-    # ──────────────────────────────────────────────────────────
-    # PANEL 0-LEFT: Grouped bar chart @ n_max
-    # ──────────────────────────────────────────────────────────
+    # --- grouped bar chart @ n_max ---
     x  = np.arange(n_algos)
     bw = 0.36
-    bc = [cpu_t[a].get(n_max, 0)  for a in algos]
+    bc     = [cpu_t[a].get(n_max, 0)  for a in algos]
     bg_vals = [cuda_t[a].get(n_max, 0) for a in algos]
 
     ax_bar.bar(x - bw/2, bc,      bw, color=CPU_C,  alpha=0.85, zorder=3, label="CPU")
     ax_bar.bar(x + bw/2, bg_vals, bw, color=CUDA_C, alpha=0.85, zorder=3, label="CUDA")
 
-    # Smart label placement: if CUDA bar is tiny compared to CPU,
-    # put its label above the CPU bar height to avoid occlusion
     y_max_bar = max(max(bc), 1)
     for xi, (vc, vg) in enumerate(zip(bc, bg_vals)):
-        # CPU label — always above its bar
         if vc > 0:
             ax_bar.text(xi - bw/2, vc + y_max_bar*0.012,
                         f"{vc:.0f}", ha="center", va="bottom",
                         color=CPU_C, fontsize=6.5, fontweight="bold")
-        # CUDA label — above CPU bar if CUDA bar is < 15% of CPU bar
         if vg > 0:
+            # if CUDA bar is tiny, put label above the CPU bar so it doesn't get buried
             label_y = (vc + y_max_bar*0.015) if vg < vc * 0.15 else (vg + y_max_bar*0.012)
             ax_bar.text(xi + bw/2, label_y,
                         f"{vg:.0f}", ha="center", va="bottom",
@@ -202,13 +182,10 @@ def make_plot(speedup_path, output_path):
           title=f"Execution Time  @  N = {n_max:,}  samples",
           ylabel="Time  (ms)")
 
-    # ──────────────────────────────────────────────────────────
-    # PANEL 0-RIGHT: Log-scale time vs N, labels spread apart
-    # ──────────────────────────────────────────────────────────
-    # Collect end-of-line y values for label placement
-    label_info = []   # (y_data, algo)
+    # --- log-scale time vs N ---
+    label_info = []
     for algo in algos:
-        clr = ALGO_CLR.get(algo, "#aaa")
+        clr  = ALGO_CLR.get(algo, "#aaa")
         ns_c = sorted(cpu_t[algo])
         ns_g = sorted(cuda_t[algo])
         ts_c = [cpu_t[algo][n]  for n in ns_c]
@@ -217,9 +194,8 @@ def make_plot(speedup_path, output_path):
         ax_log.plot(ns_g, ts_g, "s-",  color=clr, alpha=0.88, lw=1.8, ms=4)
         label_info.append((math.log10(max(ts_g[-1], 0.001)), algo, clr))
 
-    # Spread labels so they don't overlap (work in log-space)
-    raw_log_ys = [x[0] for x in label_info]
-    spread_log = spread_labels(raw_log_ys, min_gap=0.12)
+    raw_log_ys  = [x[0] for x in label_info]
+    spread_log  = spread_labels(raw_log_ys, min_gap=0.12)
 
     x_label = n_max * 1.02
     for (_, algo, clr), log_y in zip(label_info, spread_log):
@@ -234,17 +210,15 @@ def make_plot(speedup_path, output_path):
     ax_log.set_xlim(left=0, right=n_max * 1.30)
 
     p_cpu  = mpatches.Patch(color=MUTED, alpha=0.5, label="- - -  CPU")
-    p_cuda = mpatches.Patch(color=FG,   alpha=0.9, label="———  CUDA")
+    p_cuda = mpatches.Patch(color=FG,   alpha=0.9, label="---  CUDA")
     ax_log.legend(handles=[p_cpu, p_cuda],
                   facecolor=SURFACE, edgecolor=BORDER,
                   labelcolor=FG, fontsize=8.5, loc="upper left")
     style(ax_log,
-          title="Time vs Samples  (log scale)  — dashed = CPU, solid = CUDA",
+          title="Time vs Samples  (log scale)  - dashed = CPU, solid = CUDA",
           xlabel="Samples  (N)", ylabel="Time  (ms, log)")
 
-    # ──────────────────────────────────────────────────────────
-    # PANELS 1 & 2: 10 speedup curves, 5 per row
-    # ──────────────────────────────────────────────────────────
+    # --- speedup curves ---
     def draw_speedup(ax, algo, show_ylabel):
         clr  = ALGO_CLR.get(algo, "#aaa")
         lbl  = ALGO_LABEL.get(algo, algo)
@@ -252,93 +226,85 @@ def make_plot(speedup_path, output_path):
         sp   = [sp_map[algo][n] for n in ns]
         is_lbfgs = (algo == "LBFGS")
 
-        # Red zone: GPU overhead (< 1×)
         ax.axhspan(0, 1, color=RED_BAD, alpha=0.07, zorder=1)
         ax.axhline(1.0, color=RED_BAD, lw=1.0, ls="--", alpha=0.65, zorder=2)
 
         if is_lbfgs:
             sp_s = smooth_ma(sp, w=3)
-            ax.plot(ns, sp, "o", color=clr, alpha=0.40, ms=5.5, zorder=4,
-                    label="Raw")
-            ax.plot(ns, sp_s, "-", color=clr, alpha=0.92, lw=2.3, zorder=5,
-                    label="Trend")
+            ax.plot(ns, sp,  "o", color=clr, alpha=0.40, ms=5.5, zorder=4, label="Raw")
+            ax.plot(ns, sp_s, "-", color=clr, alpha=0.92, lw=2.3, zorder=5, label="Trend")
             ax.fill_between(ns, 1, sp_s, alpha=0.13, color=clr, zorder=3)
             ax.legend(facecolor=SURFACE, edgecolor=BORDER, labelcolor=MUTED,
                       fontsize=6, loc="upper left")
+            # warn if speedup is genuinely bad after clipping
+            if min(sp_s) < 0.5:
+                ax.text(0.5, 0.07, "(!) overhead", transform=ax.transAxes,
+                        ha="center", color=RED_BAD, fontsize=7, fontweight="bold")
         else:
             ax.fill_between(ns, 1, sp, alpha=0.15, color=clr, zorder=3)
             ax.plot(ns, sp, "o-", color=clr, lw=2.2, ms=5.5, zorder=5)
 
-        # Peak annotation (top of curve)
         mx_sp = max(sp); mx_n = ns[sp.index(mx_sp)]
-        ax.annotate(f"{mx_sp:.1f}×",
+        ax.annotate(f"{mx_sp:.1f}x",
                     xy=(mx_n, mx_sp), xytext=(0, 11),
                     textcoords="offset points",
                     ha="center", color=GOLD, fontsize=10, fontweight="bold",
                     arrowprops=dict(arrowstyle="-", color=GOLD, lw=0.6))
 
-        # Overhead annotation (bottom, only if meaningful)
         mn_sp = min(sp)
-        if mn_sp < 0.95:   # only label if more than 5% slower
+        if mn_sp < 0.95:
             mn_n = ns[sp.index(mn_sp)]
             ax.text(mn_n, mn_sp - abs(ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.06,
-                    f"{mn_sp:.2f}×\noverhead",
+                    f"{mn_sp:.2f}x\noverhead",
                     ha="center", va="top", color=RED_BAD,
                     fontsize=6, fontweight="bold")
 
-        # Y-axis: always include 0 and the peak
         y_top = mx_sp * 1.18
         ax.set_ylim(0, y_top)
 
         ax.set_xticks(ns[::2])
         ax.set_xticklabels([n_label(n) for n in ns[::2]], fontsize=7)
         style(ax, title=lbl, xlabel="Samples",
-              ylabel="Speedup  ×" if show_ylabel else "")
+              ylabel="Speedup  x" if show_ylabel else "")
 
     for i, algo in enumerate(algos[:5]):
         draw_speedup(ax_sp1[i], algo, show_ylabel=(i == 0))
     for i, algo in enumerate(algos[5:10]):
         draw_speedup(ax_sp2[i], algo, show_ylabel=(i == 0))
 
-    # ──────────────────────────────────────────────────────────
-    # PANEL 3-LEFT: Heatmap — clipped speedup, two-slope colour
-    # ──────────────────────────────────────────────────────────
+    # --- heatmap ---
     heat = np.zeros((n_algos, len(sizes)))
     for i, algo in enumerate(algos):
         for j, n in enumerate(sizes):
             v = sp_map[algo].get(n, 1.0)
-            heat[i, j] = max(0.10, v)   # clip: no negative values
+            heat[i, j] = max(0.10, v)
 
     from matplotlib.colors import TwoSlopeNorm
     v_min = max(0.0, heat.min() - 0.05)
     v_max = heat.max()
-    norm = TwoSlopeNorm(vmin=v_min, vcenter=1.0, vmax=v_max)
+    norm  = TwoSlopeNorm(vmin=v_min, vcenter=1.0, vmax=v_max)
 
     im = ax_heat.imshow(heat, aspect="auto", cmap="RdYlGn", norm=norm)
     ax_heat.set_xticks(range(len(sizes)))
-    ax_heat.set_xticklabels([n_label(n) for n in sizes],
-                              fontsize=8, color=MUTED)
+    ax_heat.set_xticklabels([n_label(n) for n in sizes], fontsize=8, color=MUTED)
     ax_heat.set_yticks(range(n_algos))
-    ax_heat.set_yticklabels([ALGO_LABEL.get(a, a) for a in algos],
-                              fontsize=8, color=MUTED)
+    ax_heat.set_yticklabels([ALGO_LABEL.get(a, a) for a in algos], fontsize=8, color=MUTED)
 
     for i in range(n_algos):
         for j in range(len(sizes)):
             v   = heat[i, j]
             raw = sp_map[algos[i]].get(sizes[j], 1.0)
-            # Text colour based on cell brightness
             cell_norm = norm(v)
-            fc = "#111111" if 0.25 < cell_norm < 0.82 else FG
-            txt = f"{v:.1f}×"
-            # Mark only genuinely suspicious raw values (before clip)
+            fc  = "#111111" if 0.25 < cell_norm < 0.82 else FG
+            txt = f"{v:.1f}x"
             if raw < 0.20:
-                txt = f"⚠{v:.1f}×"
+                txt = f"(!){v:.1f}x"
             ax_heat.text(j, i, txt, ha="center", va="center",
                           fontsize=7, fontweight="bold", color=fc)
 
     cbar = fig.colorbar(im, ax=ax_heat, pad=0.03, fraction=0.046)
     cbar.ax.tick_params(colors=MUTED, labelsize=7)
-    cbar.set_label("Speedup ×  (red < 1  →  GPU overhead)", color=MUTED, fontsize=7.5)
+    cbar.set_label("Speedup x  (red < 1  ->  GPU overhead)", color=MUTED, fontsize=7.5)
     style(ax_heat,
           title="Speedup Heatmap  (N  vs  Algorithm)\n"
                 "Red = GPU overhead  |  Green = CUDA faster")
@@ -346,9 +312,7 @@ def make_plot(speedup_path, output_path):
     for sp_ in ax_heat.spines.values():
         sp_.set_edgecolor(BORDER)
 
-    # ──────────────────────────────────────────────────────────
-    # PANEL 3-CENTRE: Stacked total time, CPU/CUDA labels in margin
-    # ──────────────────────────────────────────────────────────
+    # --- stacked total time ---
     x_pos = np.arange(len(sizes))
     bot_c = np.zeros(len(sizes))
     bot_g = np.zeros(len(sizes))
@@ -364,18 +328,15 @@ def make_plot(speedup_path, output_path):
                    label=ALGO_LABEL.get(algo, algo))
         bot_c += vc; bot_g += vg
 
-    # "CPU" / "CUDA" labels in the top axis margin (transform=ax.transAxes)
     ax_stk.text(-0.22/len(sizes) + 0.5 - 0.22/(n_algos),
-                1.015, "◀ CPU", transform=ax_stk.transAxes,
+                1.015, "< CPU", transform=ax_stk.transAxes,
                 ha="center", va="bottom", color=CPU_C,
                 fontsize=8.5, fontweight="bold")
     ax_stk.text(0.5 + 0.22/(n_algos),
-                1.015, "CUDA ▶", transform=ax_stk.transAxes,
+                1.015, "CUDA >", transform=ax_stk.transAxes,
                 ha="center", va="bottom", color=CUDA_C,
                 fontsize=8.5, fontweight="bold")
 
-    # Simpler: just annotate last group (rightmost N)
-    # Arrow pointing at left vs right bar of last group
     last_x = len(sizes) - 1
     ax_stk.annotate("CPU", xy=(last_x - 0.22, bot_c[last_x]),
                     xytext=(last_x - 0.55, bot_c[last_x] * 0.85),
@@ -394,16 +355,14 @@ def make_plot(speedup_path, output_path):
           title="Total Compute Time  (Left bar = CPU,  Right = CUDA)",
           xlabel="Samples  (N)", ylabel="Cumulative time  (ms)")
 
-    # ──────────────────────────────────────────────────────────
-    # PANEL 3-RIGHT: Peak speedup horizontal bar, sorted
-    # ──────────────────────────────────────────────────────────
+    # --- peak speedup horizontal bar ---
     peak_data = []
     for algo in algos:
         vals = [sp_map[algo][n] for n in sorted(sp_map[algo])]
         ns_  = sorted(sp_map[algo])
         mx   = max(vals); mx_n = ns_[vals.index(mx)]
         peak_data.append((mx, algo, mx_n))
-    peak_data.sort(key=lambda x: x[0])   # ascending → longest bar at top
+    peak_data.sort(key=lambda x: x[0])
 
     sp_sorted    = [d[0] for d in peak_data]
     algos_sorted = [d[1] for d in peak_data]
@@ -411,16 +370,14 @@ def make_plot(speedup_path, output_path):
     clrs_sorted  = [ALGO_CLR.get(a, "#aaa") for a in algos_sorted]
 
     y_pos = np.arange(len(algos_sorted))
-    hbars = ax_peak.barh(y_pos, sp_sorted, color=clrs_sorted,
-                          alpha=0.88, zorder=3)
+    hbars = ax_peak.barh(y_pos, sp_sorted, color=clrs_sorted, alpha=0.88, zorder=3)
 
-    # Paint bars < 1× red
     for bar, val in zip(hbars, sp_sorted):
         if val < 1.0:
             bar.set_color(RED_BAD); bar.set_alpha(0.75)
 
     ax_peak.axvline(1.0, color=RED_BAD, lw=1.3, ls="--",
-                    alpha=0.8, zorder=4, label="Breakeven  (1×)")
+                    alpha=0.8, zorder=4, label="Breakeven  (1x)")
 
     ax_peak.set_yticks(y_pos)
     ax_peak.set_yticklabels([ALGO_LABEL.get(a, a) for a in algos_sorted],
@@ -429,7 +386,7 @@ def make_plot(speedup_path, output_path):
         clr_ = RED_BAD if val < 1.0 else GOLD
         ax_peak.text(val + max(sp_sorted) * 0.01,
                      bar.get_y() + bar.get_height()/2,
-                     f"  {val:.1f}×  @N={n_label(n_)}",
+                     f"  {val:.1f}x  @N={n_label(n_)}",
                      va="center", color=clr_,
                      fontsize=8.5, fontweight="bold")
 
@@ -438,22 +395,21 @@ def make_plot(speedup_path, output_path):
                    labelcolor=FG, fontsize=8.5, loc="lower right")
     style(ax_peak,
           title="Peak CUDA Speedup  per Algorithm\n(sorted ascending)",
-          xlabel="Speedup  (×  faster than CPU)")
+          xlabel="Speedup  (x  faster than CPU)")
 
-    # ── Footer ─────────────────────────────────────────────────
     fig.text(
         0.5, 0.005,
-        "CPU: g++ -O3 -march=native  │  CUDA: nvcc -O3 --use_fast_math  │  "
-        "Features=32  │  Epochs=60  │  Batch=64  │  "
-        "N: 512→1k→2k→4k→8k→16k  │  "
-        "L-BFGS: time varies with adaptive convergence  │  "
-        "Speedup < 1× = GPU kernel-launch + PCIe overhead dominates",
+        "CPU: g++ -O3 -march=native  |  CUDA: nvcc -O3 --use_fast_math  |  "
+        "Features=32  |  Epochs=60  |  Batch=64  |  "
+        "N: 512->1k->2k->4k->8k->16k  |  "
+        "L-BFGS: time varies with adaptive convergence  |  "
+        "Speedup < 1x = GPU kernel-launch + PCIe overhead dominates",
         ha="center", color=MUTED, fontsize=7, style="italic"
     )
 
     plt.savefig(output_path, dpi=160, bbox_inches="tight",
                 facecolor=BG, edgecolor="none")
-    print(f"  Saved → {output_path}")
+    print(f"  Saved -> {output_path}")
     plt.close()
 
 
