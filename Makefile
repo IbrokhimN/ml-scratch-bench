@@ -9,8 +9,10 @@ CUDA_ARCH := $(shell nvidia-smi --query-gpu=compute_cap \
                  --format=csv,noheader 2>/dev/null \
                  | head -1 | tr -d '.' 2>/dev/null || echo 75)
 
-CPU_SRC  := cpu/ml_cpu.cpp
-CUDA_SRC := cuda/ml_cuda.cu
+CPU_SRC  := cpu/main.cpp
+CUDA_SRC := cuda/main.cu
+CPU_DEPS  := $(wildcard cpu/*/*.hpp)
+CUDA_DEPS := $(wildcard cuda/*/*.cuh cuda/*/*.hpp)
 CPU_BIN  := cpu/ml_cpu
 CUDA_BIN := cuda/ml_cuda
 RESULTS  := results
@@ -25,11 +27,11 @@ all: cuda
 endif
 
 cpu: $(CPU_BIN)
-$(CPU_BIN): $(CPU_SRC)
+$(CPU_BIN): $(CPU_SRC) $(CPU_DEPS)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 cuda: $(CUDA_BIN)
-$(CUDA_BIN): $(CUDA_SRC)
+$(CUDA_BIN): $(CUDA_SRC) $(CUDA_DEPS)
 	$(NVCC) $(NVCCFLAGS) -arch=sm_$(CUDA_ARCH) -o $@ $<
 
 run: all

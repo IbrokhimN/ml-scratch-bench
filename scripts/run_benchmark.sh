@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-CPU_SRC="${ROOT}/cpu/ml_cpu.cpp"
-CUDA_SRC="${ROOT}/cuda/ml_cuda.cu"
+CPU_SRC="${ROOT}/cpu/main.cpp"
+CUDA_SRC="${ROOT}/cuda/main.cu"
 CPU_BIN="${ROOT}/cpu/ml_cpu"
 CUDA_BIN="${ROOT}/cuda/ml_cuda"
 RESULTS="${ROOT}/results"

@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # cpu bin
-add_executable(ml_cpu cpu/ml_cpu.cpp)
+add_executable(ml_cpu cpu/main.cpp)
 target_compile_options(ml_cpu PRIVATE -O3 -march=native -Wall)
 target_link_libraries(ml_cpu PRIVATE m)
 
@@ -19,7 +19,7 @@ if(CMAKE_CUDA_COMPILER)
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 90)  
 
-    add_executable(ml_cuda cuda/ml_cuda.cu)
+    add_executable(ml_cuda cuda/main.cu)
     target_compile_options(ml_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
         -O3
         --expt-relaxed-constexpr
