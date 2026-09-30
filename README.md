@@ -240,10 +240,10 @@ These omissions are intentional — the goal is to measure algorithmic paralleli
 ```bash
 # build
 g++ -std=c++17 -O3 -march=native -fopenmp \
-    -o ml_cpu cpu/ml_cpu.cpp -lm
+    -o ml_cpu cpu/main.cpp -lm
 
 nvcc -std=c++17 -O3 -arch=sm_75 -use_fast_math \
-     -o ml_cuda cuda/ml_cuda.cu -lm
+     -o ml_cuda cuda/main.cu -lm
 
 # run
 ./ml_cpu  results/cpu_results.csv
@@ -262,9 +262,18 @@ algorithm, n_samples, n_features, time_ms, metric_name, metric_value, device
 ### File Structure
 
 ```
-ml_benchmark_final/
-├── cpu/ml_cpu.cpp          # all CPU implementations
-├── cuda/ml_cuda.cu         # all CUDA kernel implementations  
+ml-scratch-bench/
+├── cpu/
+│   ├── main.cpp                  # benchmark runner, writes the CSV
+│   ├── common/                   # rng, timer, data generation, math helpers, CSV writer
+│   ├── optimizers/               # AdamW, Nadam, RMSProp, SGD+Nesterov, SGDR, L-BFGS
+│   └── models/                   # GMM-EM, Kernel PCA, MLP, Random Forest
+├── cuda/
+│   ├── main.cu                   # benchmark runner, writes the CSV
+│   ├── common/                   # CUDA_CHECK, rng, timer, data generation, CSV writer
+│   ├── kernels/                  # sum reduction and device math shared by many algorithms
+│   ├── optimizers/               # shared logistic kernels plus one file per optimizer
+│   └── models/                   # GMM-EM, Kernel PCA, MLP, Random Forest
 ├── scripts/
 │   ├── run_benchmark.sh
 │   └── plot_results.py
@@ -277,6 +286,8 @@ ml_benchmark_final/
 ├── CMakeLists.txt
 └── Makefile
 ```
+
+Each algorithm lives in its own header. `main.cpp` and `main.cu` are the only translation units, so the build commands above are unchanged apart from the entry file.
 
 ---
 
